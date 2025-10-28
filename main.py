@@ -1,0 +1,476 @@
+from fastapi import FastAPI, File, UploadFile, Request, Query
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from transformers import SegformerImageProcessor, AutoModelForSemanticSegmentation
+from PIL import Image
+import torch
+import torch.nn as nn
+import numpy as np
+import io
+import base64
+from pathlib import Path
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+# FastAPI 앱 초기화
+app = FastAPI(
+    title="의류 세그멘테이션 API",
+    description="SegFormer 모델을 사용한 고급 의류 세그멘테이션 서비스. 웨딩드레스를 포함한 다양한 의류 항목을 감지하고 배경을 제거할 수 있습니다.",
+    version="1.0.0",
+    contact={
+        "name": "API Support",
+        "url": "https://github.com",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+)
+
+# 디렉토리 생성
+Path("static").mkdir(exist_ok=True)
+Path("templates").mkdir(exist_ok=True)
+Path("uploads").mkdir(exist_ok=True)
+
+# 정적 파일 및 템플릿 설정
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# 전역 변수로 모델 저장
+processor = None
+model = None
+
+# 레이블 정보
+LABELS = {
+    0: "Background", 1: "Hat", 2: "Hair", 3: "Sunglasses",
+    4: "Upper-clothes", 5: "Skirt", 6: "Pants", 7: "Dress",
+    8: "Belt", 9: "Left-shoe", 10: "Right-shoe", 11: "Face",
+    12: "Left-leg", 13: "Right-leg", 14: "Left-arm", 15: "Right-arm",
+    16: "Bag", 17: "Scarf"
+}
+
+# Pydantic 모델
+class LabelInfo(BaseModel):
+    """레이블 정보 모델"""
+    id: int = Field(..., description="레이블 ID")
+    name: str = Field(..., description="레이블 이름")
+    percentage: float = Field(..., description="이미지 내 해당 레이블이 차지하는 비율 (%)")
+
+class SegmentationResponse(BaseModel):
+    """세그멘테이션 응답 모델"""
+    success: bool = Field(..., description="처리 성공 여부")
+    original_image: str = Field(..., description="원본 이미지 (base64)")
+    result_image: str = Field(..., description="결과 이미지 (base64)")
+    detected_labels: List[LabelInfo] = Field(..., description="감지된 레이블 목록")
+    message: str = Field(..., description="처리 결과 메시지")
+
+class ErrorResponse(BaseModel):
+    """에러 응답 모델"""
+    success: bool = Field(False, description="처리 성공 여부")
+    error: str = Field(..., description="에러 메시지")
+    message: str = Field(..., description="사용자 친화적 에러 메시지")
+
+@app.on_event("startup")
+async def load_model():
+    """애플리케이션 시작 시 모델 로드"""
+    global processor, model
+    print("SegFormer 모델 로딩 중...")
+    processor = SegformerImageProcessor.from_pretrained("mattmdjaga/segformer_b2_clothes")
+    model = AutoModelForSemanticSegmentation.from_pretrained("mattmdjaga/segformer_b2_clothes")
+    model.eval()
+    print("모델 로딩 완료!")
+
+@app.get("/", response_class=HTMLResponse, tags=["Web Interface"])
+async def home(request: Request):
+    """
+    메인 웹 인터페이스
+    
+    웨딩드레스 누끼 서비스의 메인 페이지를 반환합니다.
+    """
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/labels", tags=["정보"])
+async def get_labels():
+    """
+    사용 가능한 모든 레이블 목록 조회
+    
+    SegFormer 모델이 감지할 수 있는 18개 의류/신체 부위 레이블 목록을 반환합니다.
+    
+    Returns:
+        dict: 레이블 ID를 키로, 레이블 이름을 값으로 하는 딕셔너리
+    """
+    return {
+        "labels": LABELS,
+        "total_labels": len(LABELS),
+        "description": "SegFormer B2 모델이 감지할 수 있는 레이블 목록"
+    }
+
+@app.post("/api/segment", tags=["세그멘테이션"])
+async def segment_dress(file: UploadFile = File(..., description="세그멘테이션할 이미지 파일")):
+    """
+    드레스 세그멘테이션 (웨딩드레스 누끼)
+    
+    업로드된 이미지에서 드레스(레이블 7)를 감지하고 배경을 제거합니다.
+    
+    Args:
+        file: 업로드할 이미지 파일 (JPG, PNG, GIF, WEBP 등)
+    
+    Returns:
+        JSONResponse: 원본 이미지, 누끼 결과 이미지(투명 배경), 감지 정보
+        
+    Raises:
+        500: 이미지 처리 중 오류 발생
+    """
+    try:
+        # 이미지 읽기
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        original_size = image.size
+        
+        # 원본 이미지를 base64로 인코딩
+        buffered_original = io.BytesIO()
+        image.save(buffered_original, format="PNG")
+        original_base64 = base64.b64encode(buffered_original.getvalue()).decode()
+        
+        # 모델 추론
+        inputs = processor(images=image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits.cpu()
+        
+        # 업샘플링
+        upsampled_logits = nn.functional.interpolate(
+            logits,
+            size=original_size[::-1],  # (height, width)
+            mode="bilinear",
+            align_corners=False,
+        )
+        
+        # 세그멘테이션 마스크 생성
+        pred_seg = upsampled_logits.argmax(dim=1)[0].numpy()
+        
+        # 드레스 마스크 생성 (레이블 7: Dress)
+        dress_mask = (pred_seg == 7).astype(np.uint8) * 255
+        
+        # 원본 이미지를 numpy 배열로 변환
+        image_array = np.array(image)
+        
+        # 누끼 이미지 생성 (RGBA)
+        result_image = np.zeros((image_array.shape[0], image_array.shape[1], 4), dtype=np.uint8)
+        result_image[:, :, :3] = image_array  # RGB 채널
+        result_image[:, :, 3] = dress_mask    # 알파 채널
+        
+        # PIL 이미지로 변환
+        result_pil = Image.fromarray(result_image, mode='RGBA')
+        
+        # 결과 이미지를 base64로 인코딩
+        buffered_result = io.BytesIO()
+        result_pil.save(buffered_result, format="PNG")
+        result_base64 = base64.b64encode(buffered_result.getvalue()).decode()
+        
+        # 드레스가 감지되었는지 확인
+        dress_pixels = int(np.sum(pred_seg == 7))
+        total_pixels = int(pred_seg.size)
+        dress_percentage = float((dress_pixels / total_pixels) * 100)
+        
+        return JSONResponse({
+            "success": True,
+            "original_image": f"data:image/png;base64,{original_base64}",
+            "result_image": f"data:image/png;base64,{result_base64}",
+            "dress_detected": bool(dress_pixels > 0),
+            "dress_percentage": round(dress_percentage, 2),
+            "message": f"드레스 영역: {dress_percentage:.2f}% 감지됨" if dress_pixels > 0 else "드레스가 감지되지 않았습니다."
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "message": f"처리 중 오류 발생: {str(e)}"
+        }, status_code=500)
+
+@app.get("/health", tags=["정보"])
+async def health_check():
+    """
+    서버 상태 확인
+    
+    서버와 모델의 로딩 상태를 확인합니다.
+    
+    Returns:
+        dict: 서버 상태 및 모델 로딩 여부
+    """
+    return {
+        "status": "healthy",
+        "model_loaded": model is not None and processor is not None,
+        "model_name": "mattmdjaga/segformer_b2_clothes",
+        "version": "1.0.0"
+    }
+
+@app.post("/api/segment-custom", tags=["세그멘테이션"])
+async def segment_custom(
+    file: UploadFile = File(..., description="세그멘테이션할 이미지 파일"),
+    labels: str = Query(..., description="추출할 레이블 ID (쉼표로 구분, 예: 4,5,6,7)")
+):
+    """
+    커스텀 레이블 세그멘테이션
+    
+    지정한 레이블들만 추출하여 배경을 제거합니다.
+    
+    Args:
+        file: 업로드할 이미지 파일
+        labels: 추출할 레이블 ID (쉼표로 구분)
+                예: "7" (드레스만), "4,5,6,7" (상의, 치마, 바지, 드레스)
+    
+    Returns:
+        JSONResponse: 원본 이미지, 선택한 레이블만 추출한 결과 이미지
+        
+    Example:
+        - labels="7": 드레스만 추출
+        - labels="4,6": 상의와 바지만 추출
+        - labels="1,2,11": 모자, 머리, 얼굴만 추출
+    """
+    try:
+        # 레이블 파싱
+        label_ids = [int(l.strip()) for l in labels.split(",")]
+        
+        # 이미지 읽기
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        original_size = image.size
+        
+        # 원본 이미지를 base64로 인코딩
+        buffered_original = io.BytesIO()
+        image.save(buffered_original, format="PNG")
+        original_base64 = base64.b64encode(buffered_original.getvalue()).decode()
+        
+        # 모델 추론
+        inputs = processor(images=image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits.cpu()
+        
+        # 업샘플링
+        upsampled_logits = nn.functional.interpolate(
+            logits,
+            size=original_size[::-1],
+            mode="bilinear",
+            align_corners=False,
+        )
+        
+        # 세그멘테이션 마스크 생성
+        pred_seg = upsampled_logits.argmax(dim=1)[0].numpy()
+        
+        # 선택한 레이블들의 마스크 생성
+        combined_mask = np.zeros_like(pred_seg, dtype=bool)
+        for label_id in label_ids:
+            combined_mask |= (pred_seg == label_id)
+        
+        mask = combined_mask.astype(np.uint8) * 255
+        
+        # 원본 이미지를 numpy 배열로 변환
+        image_array = np.array(image)
+        
+        # 누끼 이미지 생성 (RGBA)
+        result_image = np.zeros((image_array.shape[0], image_array.shape[1], 4), dtype=np.uint8)
+        result_image[:, :, :3] = image_array
+        result_image[:, :, 3] = mask
+        
+        # PIL 이미지로 변환
+        result_pil = Image.fromarray(result_image, mode='RGBA')
+        
+        # 결과 이미지를 base64로 인코딩
+        buffered_result = io.BytesIO()
+        result_pil.save(buffered_result, format="PNG")
+        result_base64 = base64.b64encode(buffered_result.getvalue()).decode()
+        
+        # 각 레이블의 픽셀 수 계산
+        detected_labels = []
+        total_pixels = int(pred_seg.size)
+        for label_id in label_ids:
+            pixels = int(np.sum(pred_seg == label_id))
+            if pixels > 0:
+                detected_labels.append({
+                    "id": label_id,
+                    "name": LABELS.get(label_id, "Unknown"),
+                    "percentage": round((pixels / total_pixels) * 100, 2)
+                })
+        
+        total_detected = int(np.sum(combined_mask))
+        
+        return JSONResponse({
+            "success": True,
+            "original_image": f"data:image/png;base64,{original_base64}",
+            "result_image": f"data:image/png;base64,{result_base64}",
+            "requested_labels": [{"id": lid, "name": LABELS.get(lid, "Unknown")} for lid in label_ids],
+            "detected_labels": detected_labels,
+            "total_percentage": round((total_detected / total_pixels) * 100, 2),
+            "message": f"{len(detected_labels)}개의 레이블 감지됨" if detected_labels else "선택한 레이블이 감지되지 않았습니다."
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "message": f"처리 중 오류 발생: {str(e)}"
+        }, status_code=500)
+
+@app.post("/api/analyze", tags=["분석"])
+async def analyze_image(file: UploadFile = File(..., description="분석할 이미지 파일")):
+    """
+    이미지 전체 분석
+    
+    이미지에서 모든 레이블을 감지하고 각 레이블의 비율을 분석합니다.
+    누끼 처리 없이 분석 정보만 반환합니다.
+    
+    Args:
+        file: 분석할 이미지 파일
+    
+    Returns:
+        JSONResponse: 감지된 모든 레이블과 비율 정보
+    """
+    try:
+        # 이미지 읽기
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        original_size = image.size
+        
+        # 모델 추론
+        inputs = processor(images=image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits.cpu()
+        
+        # 업샘플링
+        upsampled_logits = nn.functional.interpolate(
+            logits,
+            size=original_size[::-1],
+            mode="bilinear",
+            align_corners=False,
+        )
+        
+        # 세그멘테이션 마스크 생성
+        pred_seg = upsampled_logits.argmax(dim=1)[0].numpy()
+        
+        # 각 레이블의 픽셀 수 계산
+        total_pixels = int(pred_seg.size)
+        detected_labels = []
+        
+        for label_id, label_name in LABELS.items():
+            pixels = int(np.sum(pred_seg == label_id))
+            percentage = round((pixels / total_pixels) * 100, 2)
+            if pixels > 0:
+                detected_labels.append({
+                    "id": label_id,
+                    "name": label_name,
+                    "pixels": pixels,
+                    "percentage": percentage
+                })
+        
+        # 비율 순으로 정렬
+        detected_labels.sort(key=lambda x: x["percentage"], reverse=True)
+        
+        return JSONResponse({
+            "success": True,
+            "image_size": {"width": original_size[0], "height": original_size[1]},
+            "total_pixels": total_pixels,
+            "detected_labels": detected_labels,
+            "total_detected": len(detected_labels),
+            "message": f"총 {len(detected_labels)}개의 레이블 감지됨"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "message": f"처리 중 오류 발생: {str(e)}"
+        }, status_code=500)
+
+@app.post("/api/remove-background", tags=["세그멘테이션"])
+async def remove_background(file: UploadFile = File(..., description="배경을 제거할 이미지 파일")):
+    """
+    전체 배경 제거 (인물만 추출)
+    
+    배경(레이블 0)을 제거하고 인물과 의류만 남깁니다.
+    
+    Args:
+        file: 배경을 제거할 이미지 파일
+    
+    Returns:
+        JSONResponse: 배경이 제거된 이미지 (투명 배경)
+    """
+    try:
+        # 이미지 읽기
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        original_size = image.size
+        
+        # 원본 이미지를 base64로 인코딩
+        buffered_original = io.BytesIO()
+        image.save(buffered_original, format="PNG")
+        original_base64 = base64.b64encode(buffered_original.getvalue()).decode()
+        
+        # 모델 추론
+        inputs = processor(images=image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits.cpu()
+        
+        # 업샘플링
+        upsampled_logits = nn.functional.interpolate(
+            logits,
+            size=original_size[::-1],
+            mode="bilinear",
+            align_corners=False,
+        )
+        
+        # 세그멘테이션 마스크 생성
+        pred_seg = upsampled_logits.argmax(dim=1)[0].numpy()
+        
+        # 배경이 아닌 모든 것을 포함하는 마스크
+        mask = (pred_seg != 0).astype(np.uint8) * 255
+        
+        # 원본 이미지를 numpy 배열로 변환
+        image_array = np.array(image)
+        
+        # 누끼 이미지 생성 (RGBA)
+        result_image = np.zeros((image_array.shape[0], image_array.shape[1], 4), dtype=np.uint8)
+        result_image[:, :, :3] = image_array
+        result_image[:, :, 3] = mask
+        
+        # PIL 이미지로 변환
+        result_pil = Image.fromarray(result_image, mode='RGBA')
+        
+        # 결과 이미지를 base64로 인코딩
+        buffered_result = io.BytesIO()
+        result_pil.save(buffered_result, format="PNG")
+        result_base64 = base64.b64encode(buffered_result.getvalue()).decode()
+        
+        # 배경이 아닌 픽셀 수 계산
+        foreground_pixels = int(np.sum(pred_seg != 0))
+        total_pixels = int(pred_seg.size)
+        foreground_percentage = round((foreground_pixels / total_pixels) * 100, 2)
+        
+        return JSONResponse({
+            "success": True,
+            "original_image": f"data:image/png;base64,{original_base64}",
+            "result_image": f"data:image/png;base64,{result_base64}",
+            "foreground_percentage": foreground_percentage,
+            "message": f"배경 제거 완료 (인물 영역: {foreground_percentage}%)"
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "message": f"처리 중 오류 발생: {str(e)}"
+        }, status_code=500)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+

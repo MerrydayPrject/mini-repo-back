@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 가상환경
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 모델 캐시
+.cache/
+models/
+.huggingface/
+
+# 업로드 파일
+uploads/*
+!uploads/.gitkeep
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+
+# 환경 변수
+.env
+.env.local
+
+
