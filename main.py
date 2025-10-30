@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Request, Query
+from fastapi import FastAPI, File, UploadFile, Request, Query, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,6 +12,13 @@ import base64
 from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+import os
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 # FastAPI 앱 초기화
 app = FastAPI(
@@ -469,6 +476,145 @@ async def remove_background(file: UploadFile = File(..., description="배경을 
             "error": str(e),
             "message": f"처리 중 오류 발생: {str(e)}"
         }, status_code=500)
+
+@app.post("/api/compose-dress", tags=["Gemini 이미지 합성"])
+async def compose_dress(
+    person_image: UploadFile = File(..., description="사람 이미지 파일"),
+    dress_image: UploadFile = File(..., description="드레스 이미지 파일")
+):
+    """
+    Gemini API를 사용한 사람과 드레스 이미지 합성
+    
+    사람 이미지와 드레스 이미지를 받아서 Gemini API를 통해
+    사람이 드레스를 입은 것처럼 합성된 이미지를 생성합니다.
+    
+    Args:
+        person_image: 사람 이미지 파일
+        dress_image: 드레스 이미지 파일
+    
+    Returns:
+        JSONResponse: 합성된 이미지 (base64)
+    """
+    try:
+        # .env에서 API 키 가져오기
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return JSONResponse({
+                "success": False,
+                "error": "API key not found",
+                "message": ".env 파일에 GEMINI_API_KEY가 설정되지 않았습니다."
+            }, status_code=500)
+        
+        # 이미지 읽기
+        person_contents = await person_image.read()
+        dress_contents = await dress_image.read()
+        
+        person_img = Image.open(io.BytesIO(person_contents))
+        dress_img = Image.open(io.BytesIO(dress_contents))
+        
+        # 원본 이미지들을 base64로 변환
+        person_buffered = io.BytesIO()
+        person_img.save(person_buffered, format="PNG")
+        person_base64 = base64.b64encode(person_buffered.getvalue()).decode()
+        
+        dress_buffered = io.BytesIO()
+        dress_img.save(dress_buffered, format="PNG")
+        dress_base64 = base64.b64encode(dress_buffered.getvalue()).decode()
+        
+        # Gemini Client 생성 (공식 문서와 동일한 방식)
+        client = genai.Client(api_key=api_key)
+        
+        # 프롬프트 생성 (Virtual Try-On 스타일)
+        text_input = """Create a highly realistic virtual try-on result where the person from the second image is wearing the dress from the first image.
+
+MUST PRESERVE (DO NOT CHANGE):
+- Person's face, facial features, expression, and skin tone
+- Person's body shape, proportions, and posture
+- Person's pose, stance, and limb positions
+- Background and lighting environment
+
+MUST CHANGE (Apply from dress image):
+- Replace ALL of the person's original clothing with the dress from the first image
+- The dress design, color, pattern, fabric, and style must match the first image exactly
+- Adjust shoes and accessories to complement the dress elegantly (e.g., heels for formal dress)
+- Remove any casual footwear and replace with dress-appropriate shoes
+
+REALISM REQUIREMENTS:
+- The dress must fit naturally on the person's body with realistic fabric physics
+- Create natural shadows, highlights, and fabric draping based on body contours
+- Ensure proper fabric tension at shoulders, waist, and where dress touches the body
+- Add realistic wrinkles and folds in the fabric where appropriate
+- Match the dress lighting to the environment lighting
+- The result must look like a professional fashion photograph where the person is actually wearing this dress
+
+DO NOT: Keep any of the person's original clothing. DO NOT: Change the person's identity, face, or body type.
+GOAL: Photo-realistic virtual try-on that looks completely natural and believable."""
+        
+        # Gemini API 호출 (공식 문서 방식: dress, model, text 순서)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[dress_img, person_img, text_input]
+        )
+        
+        # 응답 확인
+        if not response.candidates or len(response.candidates) == 0:
+            return JSONResponse({
+                "success": False,
+                "error": "No response from Gemini",
+                "message": "Gemini API가 응답을 생성하지 못했습니다. 이미지가 안전 정책에 위배되거나 모델이 이미지를 생성할 수 없습니다."
+            }, status_code=500)
+        
+        # 응답에서 이미지 추출 (예시 코드와 동일한 방식)
+        image_parts = [
+            part.inline_data.data
+            for part in response.candidates[0].content.parts
+            if hasattr(part, 'inline_data') and part.inline_data
+        ]
+        
+        # 텍스트 응답도 추출
+        result_text = ""
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'text') and part.text:
+                result_text += part.text
+        
+        if image_parts:
+            # 첫 번째 이미지를 base64로 인코딩
+            result_image_base64 = base64.b64encode(image_parts[0]).decode()
+            
+            return JSONResponse({
+                "success": True,
+                "person_image": f"data:image/png;base64,{person_base64}",
+                "dress_image": f"data:image/png;base64,{dress_base64}",
+                "result_image": f"data:image/png;base64,{result_image_base64}",
+                "message": "이미지 합성이 완료되었습니다.",
+                "gemini_response": result_text
+            })
+        else:
+            return JSONResponse({
+                "success": False,
+                "error": "No image generated",
+                "message": "Gemini API가 이미지를 생성하지 못했습니다. 응답: " + result_text,
+                "gemini_response": result_text
+            }, status_code=500)
+        
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "error_detail": error_detail,
+            "message": f"이미지 합성 중 오류 발생: {str(e)}"
+        }, status_code=500)
+
+@app.get("/gemini-test", response_class=HTMLResponse, tags=["Web Interface"])
+async def gemini_test_page(request: Request):
+    """
+    Gemini 이미지 합성 테스트 페이지
+    
+    사람 이미지와 드레스 이미지를 업로드하여 합성 결과를 테스트할 수 있는 페이지
+    """
+    return templates.TemplateResponse("gemini_test.html", {"request": request})
 
 if __name__ == "__main__":
     import uvicorn
