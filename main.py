@@ -36,10 +36,10 @@ app = FastAPI(
     },
 )
 
-# CORS 설정 추가
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # 프론트엔드 주소
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # 프론트엔드 주소들
     allow_credentials=True,
     allow_methods=["*"],  # 모든 HTTP 메서드 허용
     allow_headers=["*"],  # 모든 헤더 허용
@@ -534,31 +534,22 @@ async def compose_dress(
         # Gemini Client 생성 (공식 문서와 동일한 방식)
         client = genai.Client(api_key=api_key)
         
-        # 프롬프트 생성 (Virtual Try-On 스타일)
-        text_input = """Create a highly realistic virtual try-on result where the person from the second image is wearing the dress from the first image.
+        # 프롬프트 생성 (얼굴과 체형 유지 강조)
+        text_input = """IMPORTANT: You must preserve the person's identity completely.
 
-MUST PRESERVE (DO NOT CHANGE):
-- Person's face, facial features, expression, and skin tone
-- Person's body shape, proportions, and posture
-- Person's pose, stance, and limb positions
-- Background and lighting environment
+Task: Apply ONLY the dress from the first image onto the person from the second image.
 
-MUST CHANGE (Apply from dress image):
-- Replace ALL of the person's original clothing with the dress from the first image
-- The dress design, color, pattern, fabric, and style must match the first image exactly
-- Adjust shoes and accessories to complement the dress elegantly (e.g., heels for formal dress)
-- Remove any casual footwear and replace with dress-appropriate shoes
+STRICT REQUIREMENTS:
+1. PRESERVE EXACTLY: The person's face, facial features, skin tone, hair, and body proportions
+2. PRESERVE EXACTLY: The person's pose, stance, and body position
+3. PRESERVE EXACTLY: The background and lighting from the person's image
+4. CHANGE ONLY: Replace the person's clothing with the dress from the first image
+5. The dress should fit naturally on the person's body shape
+6. Maintain realistic shadows and fabric draping on the dress
+7. Keep the person's hands, arms, legs exactly as they are in the original
 
-REALISM REQUIREMENTS:
-- The dress must fit naturally on the person's body with realistic fabric physics
-- Create natural shadows, highlights, and fabric draping based on body contours
-- Ensure proper fabric tension at shoulders, waist, and where dress touches the body
-- Add realistic wrinkles and folds in the fabric where appropriate
-- Match the dress lighting to the environment lighting
-- The result must look like a professional fashion photograph where the person is actually wearing this dress
-
-DO NOT: Keep any of the person's original clothing. DO NOT: Change the person's identity, face, or body type.
-GOAL: Photo-realistic virtual try-on that looks completely natural and believable."""
+DO NOT change the person's appearance, face, body type, or any physical features.
+ONLY apply the dress design, color, and style onto the existing person."""
         
         # Gemini API 호출 (공식 문서 방식: dress, model, text 순서)
         response = client.models.generate_content(

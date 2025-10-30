@@ -5,7 +5,6 @@
 ## 기능
 
 - 🎯 웨딩드레스 자동 감지 및 세그멘테이션
-- 🎨 **NEW!** Gemini AI를 이용한 사람과 드레스 이미지 합성
 - 🖼️ 원본 이미지와 결과 이미지 나란히 비교
 - 💾 투명 배경(PNG) 결과 이미지 다운로드
 - 📱 반응형 웹 디자인
@@ -14,11 +13,9 @@
 ## 기술 스택
 
 - **백엔드**: FastAPI
-- **AI 모델**: 
-  - [SegFormer B2 Clothes Segmentation](https://huggingface.co/mattmdjaga/segformer_b2_clothes)
-  - [Gemini 2.0 Flash Exp](https://ai.google.dev/) - 이미지 합성
+- **AI 모델**: [SegFormer B2 Clothes Segmentation](https://huggingface.co/mattmdjaga/segformer_b2_clothes)
 - **프론트엔드**: HTML5, CSS3, Vanilla JavaScript
-- **ML 프레임워크**: PyTorch, Transformers (Hugging Face), Google Generative AI
+- **ML 프레임워크**: PyTorch, Transformers (Hugging Face)
 
 ## 설치 방법
 
@@ -26,20 +23,8 @@
 
 - Python 3.8 이상
 - pip
-- Gemini API 키 (이미지 합성 기능 사용 시)
 
-### 2. 환경 변수 설정
-
-`.env` 파일을 생성하고 Gemini API 키를 설정하세요:
-
-```bash
-# .env 파일
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-**Gemini API 키 발급**: https://ai.google.dev/
-
-### 3. 패키지 설치
+### 2. 패키지 설치
 
 ```bash
 pip install -r requirements.txt
@@ -106,7 +91,6 @@ proj5/
 
 ### 정보 조회
 - `GET /`: 웹 인터페이스
-- `GET /gemini-test`: **NEW!** Gemini 이미지 합성 테스트 페이지
 - `GET /health`: 서버 상태 확인
 - `GET /labels`: 사용 가능한 레이블 목록 조회
 
@@ -114,9 +98,6 @@ proj5/
 - `POST /api/segment`: 드레스 세그멘테이션 (웨딩드레스 누끼)
 - `POST /api/segment-custom`: 커스텀 레이블 세그멘테이션
 - `POST /api/remove-background`: 전체 배경 제거 (인물만 추출)
-
-### Gemini 이미지 합성
-- `POST /api/compose-dress`: **NEW!** 사람 이미지와 드레스 이미지를 합성
 
 ### 분석
 - `POST /api/analyze`: 이미지 전체 분석 (모든 레이블 감지 및 비율 분석)
