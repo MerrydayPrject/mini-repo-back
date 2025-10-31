@@ -16,6 +16,7 @@
 - **AI 모델**: [SegFormer B2 Clothes Segmentation](https://huggingface.co/mattmdjaga/segformer_b2_clothes)
 - **프론트엔드**: HTML5, CSS3, Vanilla JavaScript
 - **ML 프레임워크**: PyTorch, Transformers (Hugging Face)
+- **데이터베이스**: MySQL (PyMySQL)
 
 ## 설치 방법
 
@@ -23,12 +24,39 @@
 
 - Python 3.8 이상
 - pip
+- MySQL 5.7 이상 (또는 MariaDB 10.2 이상)
 
-### 2. 패키지 설치
+**데이터베이스 설정**: 자세한 내용은 [`DATABASE_SETUP.md`](./DATABASE_SETUP.md)를 참조하세요.
+
+### 2. 환경 변수 설정
+
+프로젝트 루트 디렉토리에 `.env` 파일을 생성합니다:
+
+```env
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=devuser
+MYSQL_PASSWORD=your_password
+MYSQL_DATABASE=marryday
+```
+
+### 3. 패키지 설치
 
 ```bash
 pip install -r requirements.txt
 ```
+
+### 4. 데이터베이스 설정
+
+MySQL 데이터베이스 `marryday`를 생성하고, 서버 실행 시 자동으로 테이블이 생성됩니다.
+
+```sql
+CREATE DATABASE IF NOT EXISTS marryday 
+    CHARACTER SET utf8mb4 
+    COLLATE utf8mb4_unicode_ci;
+```
+
+자세한 설정 방법은 [`DATABASE_SETUP.md`](./DATABASE_SETUP.md)를 참조하세요.
 
 **참고**: PyTorch 설치 시 시스템에 맞는 버전을 선택하세요:
 - CUDA가 있는 경우: GPU 버전 PyTorch 설치 권장

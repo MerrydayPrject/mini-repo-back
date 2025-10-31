@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>옷 합성 시스템 관리자 페이지</title>
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+    <div class="admin-container">
+        <header class="admin-header">
+            <h1>🎨 옷 합성 시스템 관리</h1>
+            <p class="subtitle">합성 로그 및 통계 확인</p>
+        </header>
+
+        <!-- 통계 대시보드 -->
+        <section class="stats-section">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-content">
+                        <div class="stat-label">전체 합성</div>
+                        <div class="stat-value" id="stat-total">0</div>
+                    </div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-content">
+                        <div class="stat-label">성공</div>
+                        <div class="stat-value" id="stat-success">0</div>
+                    </div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="stat-icon">❌</div>
+                    <div class="stat-content">
+                        <div class="stat-label">실패</div>
+                        <div class="stat-value" id="stat-failed">0</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-content">
+                        <div class="stat-label">성공률</div>
+                        <div class="stat-value" id="stat-success-rate">0%</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">⏱️</div>
+                    <div class="stat-content">
+                        <div class="stat-label">평균 처리 시간</div>
+                        <div class="stat-value" id="stat-avg-time">0초</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📅</div>
+                    <div class="stat-content">
+                        <div class="stat-label">오늘</div>
+                        <div class="stat-value" id="stat-today">0</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 로그 목록 -->
+        <section class="logs-section">
+            <h2>📋 합성 로그 목록</h2>
+            
+            <div class="table-container">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>매칭 일시</th>
+                            <th>모델</th>
+                            <th>API</th>
+                            <th>상태</th>
+                            <th>처리 시간</th>
+                            <th>작업</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-tbody">
+                        <tr>
+                            <td colspan="7" class="loading">데이터를 불러오는 중...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 페이지네이션 -->
+            <div class="pagination" id="pagination">
+                <!-- 동적으로 생성됨 -->
+            </div>
+        </section>
+    </div>
+
+    <!-- 로그 상세 모달 -->
+    <div class="modal" id="detail-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📝 로그 상세 정보</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- 동적으로 생성됨 -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/admin.js"></script>
+</body>
+</html>
+
+
